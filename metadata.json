@@ -1,0 +1,8 @@
+{
+  "name": "Screen-Sharing AI Assistant",
+  "description": "An AI assistant that can see your screen and help you navigate, understand content, or troubleshoot issues.",
+  "requestFramePermissions": [
+    "camera",
+    "display-capture"
+  ]
+}
