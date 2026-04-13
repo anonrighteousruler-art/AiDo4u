@@ -2,7 +2,8 @@ export type AppMode =
   | 'screen'
   | 'live-audio'
   | 'chatbot'
-  | 'media';
+  | 'media'
+  | 'index';
 
 export interface Message {
   role: 'user' | 'assistant';

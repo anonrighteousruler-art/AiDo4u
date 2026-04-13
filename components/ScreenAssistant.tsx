@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { GoogleGenAI } from '@google/genai';
-import { MonitorUp, MonitorOff, Send, Loader2, Image as ImageIcon, MousePointer2, Keyboard, Info, Video, Square } from 'lucide-react';
+import { MonitorUp, MonitorOff, Send, Loader2, Image as ImageIcon, MousePointer2, Keyboard, Info, Save, MessageSquare } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 
 interface Message {
@@ -11,8 +11,14 @@ interface Message {
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
-const ScreenAssistant: React.FC = () => {
+interface ScreenAssistantProps {
+  isSidebarVisible: boolean;
+  toggleSidebar: () => void;
+}
+
+const ScreenAssistant: React.FC<ScreenAssistantProps> = ({ isSidebarVisible, toggleSidebar }) => {
   const [isSharing, setIsSharing] = useState(false);
+  const [isChatVisible, setIsChatVisible] = useState(true);
   const [messages, setMessages] = useState<Message[]>([
     {
       role: 'assistant',
@@ -29,11 +35,6 @@ const ScreenAssistant: React.FC = () => {
 
   // Agentic Vision Suggested Actions
   const [agentActions, setAgentActions] = useState<{action: 'CLICK' | 'TYPE', bbox: {x: number, y: number, w: number, h: number}, text?: string}[]>([]);
-
-  // Recording State
-  const [isRecording, setIsRecording] = useState(false);
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const recordedChunksRef = useRef<Blob[]>([]);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -68,56 +69,7 @@ const ScreenAssistant: React.FC = () => {
     }
   };
 
-  const startRecording = () => {
-    if (!streamRef.current) return;
-    
-    recordedChunksRef.current = [];
-    try {
-      // Try to use webm with vp9, fallback to default if not supported
-      const options = MediaRecorder.isTypeSupported('video/webm;codecs=vp9') 
-        ? { mimeType: 'video/webm;codecs=vp9' } 
-        : undefined;
-        
-      const mediaRecorder = new MediaRecorder(streamRef.current, options);
-      mediaRecorderRef.current = mediaRecorder;
-      
-      mediaRecorder.ondataavailable = (event) => {
-        if (event.data.size > 0) {
-          recordedChunksRef.current.push(event.data);
-        }
-      };
-      
-      mediaRecorder.onstop = () => {
-        const blob = new Blob(recordedChunksRef.current, { type: 'video/webm' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        document.body.appendChild(a);
-        a.style.display = 'none';
-        a.href = url;
-        a.download = `screen-recording-${new Date().toISOString().replace(/:/g, '-')}.webm`;
-        a.click();
-        window.URL.revokeObjectURL(url);
-        document.body.removeChild(a);
-      };
-      
-      mediaRecorder.start();
-      setIsRecording(true);
-    } catch (e) {
-      console.error("Error starting recording:", e);
-    }
-  };
-
-  const stopRecording = () => {
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-      mediaRecorderRef.current.stop();
-      setIsRecording(false);
-    }
-  };
-
   const stopSharing = () => {
-    if (isRecording) {
-      stopRecording();
-    }
     if (streamRef.current) {
       streamRef.current.getTracks().forEach(track => track.stop());
       streamRef.current = null;
@@ -228,23 +180,34 @@ const ScreenAssistant: React.FC = () => {
         config: {
           systemInstruction: `You are an AI assistant that can see the user's screen. Analyze the provided image.
 If the user drew a red box, pay special attention to that area.
+Your goal is to help the user navigate and fill out forms. 
 If the user asks where to click, how to find something, or what to type, you MUST respond with the exact bounding box of the target element.
-Format your response exactly like this:
-BBOX: [x, y, width, height] (where values are percentages 0-100 of the image width and height)
-If they need to type something, also include:
-TYPE: "the text to type"
-Then provide a helpful explanation. Do not use markdown for the BBOX or TYPE lines.`
+
+Format your response exactly like this for EACH element you want to highlight:
+BBOX: [x, y, width, height] (percentages 0-100)
+TYPE: "the text to type" (ONLY if it's an input field)
+
+Example for a login form:
+BBOX: [10, 20, 30, 5]
+TYPE: "your-email@example.com"
+BBOX: [10, 30, 30, 5]
+TYPE: "your-password"
+
+Then provide a helpful explanation. Do not use markdown for the BBOX or TYPE lines. Be proactive: if you see an empty form field, suggest what the user should type there based on the field label.`
         }
       });
 
       const responseText = response.text || 'I could not generate a response.';
       
-      // Parse for Agentic Vision coordinates
-      const bboxMatch = responseText.match(/BBOX:\s*\[([\d.]+),\s*([\d.]+),\s*([\d.]+),\s*([\d.]+)\]/);
-      const typeMatch = responseText.match(/TYPE:\s*"([^"]+)"/);
+      // Parse for multiple Agentic Vision actions
+      const actions: {action: 'CLICK' | 'TYPE', bbox: {x: number, y: number, w: number, h: number}, text?: string}[] = [];
+      const bboxRegex = /BBOX:\s*\[([\d.]+),\s*([\d.]+),\s*([\d.]+),\s*([\d.]+)\]/g;
+      const typeRegex = /TYPE:\s*"([^"]+)"/g;
       
-      if (bboxMatch) {
-        setAgentActions([{
+      let bboxMatch;
+      while ((bboxMatch = bboxRegex.exec(responseText)) !== null) {
+        const typeMatch = typeRegex.exec(responseText);
+        actions.push({
           action: typeMatch ? 'TYPE' : 'CLICK',
           bbox: {
             x: parseFloat(bboxMatch[1]),
@@ -253,7 +216,11 @@ Then provide a helpful explanation. Do not use markdown for the BBOX or TYPE lin
             h: parseFloat(bboxMatch[4])
           },
           text: typeMatch ? typeMatch[1] : undefined
-        }]);
+        });
+      }
+      
+      if (actions.length > 0) {
+        setAgentActions(actions);
       } else {
         // Fallback for older CLICK_AT format
         const clickMatch = responseText.match(/CLICK_AT:\s*\[([\d.]+),\s*([\d.]+)\]/);
@@ -303,28 +270,20 @@ Then provide a helpful explanation. Do not use markdown for the BBOX or TYPE lin
             Screen Assistant
           </h1>
           <div className="flex items-center gap-2">
-            {isSharing && (
-              <button
-                onClick={isRecording ? stopRecording : startRecording}
-                className={`px-4 py-2 rounded-lg font-medium text-sm flex items-center gap-2 transition-colors ${
-                  isRecording 
-                    ? 'bg-red-500 text-white hover:bg-red-600 shadow-sm animate-pulse' 
-                    : 'bg-zinc-800 text-zinc-200 hover:bg-zinc-700 border border-zinc-700'
-                }`}
-              >
-                {isRecording ? (
-                  <>
-                    <Square className="w-4 h-4 fill-current" />
-                    Stop Recording
-                  </>
-                ) : (
-                  <>
-                    <Video className="w-4 h-4" />
-                    Record
-                  </>
-                )}
-              </button>
-            )}
+            <button
+              onClick={toggleSidebar}
+              className="p-2 rounded-lg bg-zinc-800 text-zinc-400 hover:text-zinc-100 transition-colors"
+              title="Toggle Sidebar"
+            >
+              {isSidebarVisible ? <MonitorOff className="w-4 h-4" /> : <MonitorUp className="w-4 h-4" />}
+            </button>
+            <button
+              onClick={() => setIsChatVisible(!isChatVisible)}
+              className="p-2 rounded-lg bg-zinc-800 text-zinc-400 hover:text-zinc-100 transition-colors"
+              title="Toggle Chat Panel"
+            >
+              {isChatVisible ? <MessageSquare className="w-4 h-4" /> : <MonitorUp className="w-4 h-4" />}
+            </button>
             <button
               onClick={isSharing ? stopSharing : startSharing}
               className={`px-4 py-2 rounded-lg font-medium text-sm flex items-center gap-2 transition-colors ${
@@ -398,9 +357,24 @@ Then provide a helpful explanation. Do not use markdown for the BBOX or TYPE lin
                   height: `${act.bbox.h}%`,
                 }}
               >
-                <div className="absolute -top-10 left-1/2 -translate-x-1/2 bg-indigo-600 text-white text-xs font-bold px-3 py-1.5 rounded-lg shadow-xl whitespace-nowrap flex items-center gap-2">
-                  {act.action === 'TYPE' ? <Keyboard className="w-3 h-3" /> : <MousePointer2 className="w-3 h-3" />}
-                  {act.action === 'TYPE' ? `Type: "${act.text}"` : 'Click Here'}
+                <div className="absolute -top-12 left-1/2 -translate-x-1/2 bg-indigo-600 text-white text-xs font-bold px-3 py-2 rounded-lg shadow-xl whitespace-nowrap flex items-center gap-2 pointer-events-auto">
+                  {act.action === 'TYPE' ? <Keyboard className="w-4 h-4" /> : <MousePointer2 className="w-4 h-4" />}
+                  <span className="max-w-[150px] truncate">
+                    {act.action === 'TYPE' ? `Type: "${act.text}"` : 'Click Here'}
+                  </span>
+                  {act.action === 'TYPE' && act.text && (
+                    <button 
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        navigator.clipboard.writeText(act.text || '');
+                        alert('Copied to clipboard!');
+                      }}
+                      className="ml-1 p-1 hover:bg-white/20 rounded transition-colors"
+                      title="Copy to clipboard"
+                    >
+                      <Save className="w-3 h-3" />
+                    </button>
+                  )}
                   {/* Small triangle pointing down */}
                   <div className="absolute -bottom-1 left-1/2 -translate-x-1/2 border-4 border-transparent border-t-indigo-600" />
                 </div>
@@ -428,71 +402,91 @@ Then provide a helpful explanation. Do not use markdown for the BBOX or TYPE lin
       </div>
 
       {/* Right Panel: Chat Interface */}
-      <div className="w-full md:w-[400px] lg:w-[450px] flex flex-col bg-zinc-950 h-full border-l border-zinc-800">
-        <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-4">
-          {messages.map((msg, idx) => (
-            <div 
-              key={idx} 
-              className={`flex flex-col max-w-[85%] ${msg.role === 'user' ? 'self-end items-end' : 'self-start items-start'}`}
-            >
+      {isChatVisible && (
+        <div className="w-full md:w-[400px] lg:w-[450px] flex flex-col bg-zinc-950 h-full border-l border-zinc-800">
+          <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-4">
+            {messages.map((msg, idx) => (
               <div 
-                className={`px-4 py-3 rounded-2xl ${
-                  msg.role === 'user' 
-                    ? 'bg-indigo-600 text-white rounded-br-sm' 
-                    : 'bg-zinc-900 text-zinc-200 rounded-bl-sm border border-zinc-800 shadow-sm'
-                }`}
+                key={idx} 
+                className={`flex flex-col max-w-[85%] ${msg.role === 'user' ? 'self-end items-end' : 'self-start items-start'}`}
               >
-                {msg.imageUrl && (
-                  <div className="mb-2 relative group">
-                    <img 
-                      src={msg.imageUrl} 
-                      alt="Screen capture" 
-                      className="w-full max-w-[200px] rounded-lg border border-white/20 opacity-90 group-hover:opacity-100 transition-opacity"
-                    />
-                    <div className="absolute bottom-2 right-2 bg-black/60 backdrop-blur-sm px-2 py-1 rounded text-[10px] flex items-center gap-1">
-                      <ImageIcon className="w-3 h-3" />
-                      Attached
+                <div 
+                  className={`px-4 py-3 rounded-2xl ${
+                    msg.role === 'user' 
+                      ? 'bg-indigo-600 text-white rounded-br-sm' 
+                      : 'bg-zinc-900 text-zinc-200 rounded-bl-sm border border-zinc-800 shadow-sm'
+                  }`}
+                >
+                  {msg.imageUrl && (
+                    <div className="mb-2 relative group">
+                      <img 
+                        src={msg.imageUrl} 
+                        alt="Screen capture" 
+                        className="w-full max-w-[200px] rounded-lg border border-white/20 opacity-90 group-hover:opacity-100 transition-opacity"
+                      />
+                      <div className="absolute bottom-2 right-2 bg-black/60 backdrop-blur-sm px-2 py-1 rounded text-[10px] flex items-center gap-1">
+                        <ImageIcon className="w-3 h-3" />
+                        Attached
+                      </div>
                     </div>
+                  )}
+                  <div className="prose prose-invert prose-sm max-w-none">
+                    <ReactMarkdown>{msg.text}</ReactMarkdown>
                   </div>
-                )}
-                <div className="prose prose-invert prose-sm max-w-none">
-                  <ReactMarkdown>{msg.text}</ReactMarkdown>
+                  {msg.role === 'assistant' && (
+                    <button 
+                      onClick={() => {
+                        const indexData = JSON.parse(localStorage.getItem('ai-data-index') || '[]');
+                        const newItem = {
+                          id: Date.now().toString(),
+                          timestamp: Date.now(),
+                          title: 'Screen Insight',
+                          content: msg.text
+                        };
+                        localStorage.setItem('ai-data-index', JSON.stringify([newItem, ...indexData]));
+                        alert('Saved to Data Index!');
+                      }}
+                      className="mt-2 text-xs text-indigo-400 hover:text-indigo-300 flex items-center gap-1"
+                    >
+                      <Save className="w-3 h-3" /> Save to Index
+                    </button>
+                  )}
                 </div>
               </div>
-            </div>
-          ))}
-          {isLoading && (
-            <div className="self-start flex items-center gap-2 text-zinc-500 text-sm px-4 py-2">
-              <Loader2 className="w-4 h-4 animate-spin" />
-              Analyzing screen...
-            </div>
-          )}
-          <div ref={chatEndRef} />
-        </div>
+            ))}
+            {isLoading && (
+              <div className="self-start flex items-center gap-2 text-zinc-500 text-sm px-4 py-2">
+                <Loader2 className="w-4 h-4 animate-spin" />
+                Analyzing screen...
+              </div>
+            )}
+            <div ref={chatEndRef} />
+          </div>
 
-        <div className="p-4 border-t border-zinc-800 bg-zinc-950">
-          <form 
-            onSubmit={(e) => { e.preventDefault(); handleSend(); }}
-            className="relative flex items-center"
-          >
-            <input
-              type="text"
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              placeholder={isSharing ? "Ask about your screen..." : "Start sharing to ask questions..."}
-              disabled={isLoading}
-              className="w-full bg-zinc-900 border border-zinc-700 text-zinc-100 rounded-xl pl-4 pr-12 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500 transition-all disabled:opacity-50 placeholder:text-zinc-500 text-sm"
-            />
-            <button
-              type="submit"
-              disabled={!input.trim() || isLoading}
-              className="absolute right-2 p-2 text-zinc-400 hover:text-indigo-400 disabled:opacity-50 disabled:hover:text-zinc-400 transition-colors"
+          <div className="p-4 border-t border-zinc-800 bg-zinc-950">
+            <form 
+              onSubmit={(e) => { e.preventDefault(); handleSend(); }}
+              className="relative flex items-center"
             >
-              <Send className="w-5 h-5" />
-            </button>
-          </form>
+              <input
+                type="text"
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                placeholder={isSharing ? "Ask about your screen..." : "Start sharing to ask questions..."}
+                disabled={isLoading}
+                className="w-full bg-zinc-900 border border-zinc-700 text-zinc-100 rounded-xl pl-4 pr-12 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500 transition-all disabled:opacity-50 placeholder:text-zinc-500 text-sm"
+              />
+              <button
+                type="submit"
+                disabled={!input.trim() || isLoading}
+                className="absolute right-2 p-2 text-zinc-400 hover:text-indigo-400 disabled:opacity-50 disabled:hover:text-zinc-400 transition-colors"
+              >
+                <Send className="w-5 h-5" />
+              </button>
+            </form>
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 };

@@ -1,5 +1,5 @@
 import React from 'react';
-import { MonitorUp, Mic, MessageSquare, Image as ImageIcon, Sparkles } from 'lucide-react';
+import { MonitorUp, Mic, MessageSquare, Image as ImageIcon, Sparkles, FileText } from 'lucide-react';
 import { AppMode } from '../types';
 
 interface SidebarProps {
@@ -13,6 +13,7 @@ const Sidebar: React.FC<SidebarProps> = ({ currentMode, setMode }) => {
     { id: 'live-audio', label: 'Live Audio', icon: <Mic className="w-5 h-5" />, desc: 'Conversational Voice' },
     { id: 'chatbot', label: 'AI Chatbot', icon: <MessageSquare className="w-5 h-5" />, desc: 'Thinking, Fast, Search, Maps' },
     { id: 'media', label: 'Media Analysis', icon: <ImageIcon className="w-5 h-5" />, desc: 'Image, Video & Audio' },
+    { id: 'index', label: 'Data Index', icon: <FileText className="w-5 h-5" />, desc: 'Collect & Index Data' },
   ];
 
   return (
