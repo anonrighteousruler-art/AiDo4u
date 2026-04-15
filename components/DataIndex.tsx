@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Save, Trash2, Link as LinkIcon, FileText } from 'lucide-react';
+import { Save, Trash2, Link as LinkIcon, FileText, Menu, X } from 'lucide-react';
 
 interface IndexedItem {
   id: string;
@@ -9,7 +9,12 @@ interface IndexedItem {
   url?: string;
 }
 
-const DataIndex: React.FC = () => {
+interface DataIndexProps {
+  isSidebarVisible: boolean;
+  toggleSidebar: () => void;
+}
+
+const DataIndex: React.FC<DataIndexProps> = ({ isSidebarVisible, toggleSidebar }) => {
   const [items, setItems] = useState<IndexedItem[]>([]);
 
   useEffect(() => {
@@ -37,8 +42,16 @@ const DataIndex: React.FC = () => {
   };
 
   return (
-    <div className="h-full flex flex-col p-6 bg-zinc-950">
-      <h2 className="text-2xl font-semibold text-zinc-100 mb-6">Data Index</h2>
+    <div className="h-full flex flex-col p-6 bg-zinc-950 relative">
+      <button
+        onClick={toggleSidebar}
+        className="absolute top-4 left-4 p-2 rounded-lg bg-zinc-800/50 text-zinc-400 hover:text-zinc-100 transition-colors z-50"
+        title="Toggle Sidebar"
+      >
+        {isSidebarVisible ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
+      </button>
+
+      <h2 className="text-2xl font-semibold text-zinc-100 mb-6 pl-12">Data Index</h2>
       <div className="flex-1 overflow-y-auto space-y-4">
         {items.length === 0 && (
           <div className="text-center text-zinc-600 mt-20">No data indexed yet. Use the Screen Assistant to save snippets!</div>

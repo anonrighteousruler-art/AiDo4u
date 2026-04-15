@@ -1,13 +1,18 @@
 import React, { useState, useRef } from 'react';
 import { GoogleGenAI } from '@google/genai';
-import { Upload, FileImage, FileVideo, FileAudio, Loader2, Sparkles } from 'lucide-react';
+import { Upload, FileImage, FileVideo, FileAudio, Loader2, Sparkles, Menu, X } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
 type MediaType = 'image' | 'video' | 'audio' | null;
 
-const MediaAnalysis: React.FC = () => {
+interface MediaAnalysisProps {
+  isSidebarVisible: boolean;
+  toggleSidebar: () => void;
+}
+
+const MediaAnalysis: React.FC<MediaAnalysisProps> = ({ isSidebarVisible, toggleSidebar }) => {
   const [file, setFile] = useState<File | null>(null);
   const [mediaType, setMediaType] = useState<MediaType>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
@@ -98,7 +103,15 @@ const MediaAnalysis: React.FC = () => {
   };
 
   return (
-    <div className="h-full flex flex-col bg-zinc-950 p-6 md:p-10 overflow-y-auto">
+    <div className="h-full flex flex-col bg-zinc-950 p-6 md:p-10 overflow-y-auto relative">
+      <button
+        onClick={toggleSidebar}
+        className="absolute top-4 left-4 p-2 rounded-lg bg-zinc-800/50 text-zinc-400 hover:text-zinc-100 transition-colors z-50"
+        title="Toggle Sidebar"
+      >
+        {isSidebarVisible ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
+      </button>
+
       <div className="max-w-4xl mx-auto w-full space-y-8">
         
         {/* Header */}

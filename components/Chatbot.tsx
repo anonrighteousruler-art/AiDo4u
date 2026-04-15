@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { GoogleGenAI, ThinkingLevel } from '@google/genai';
-import { Send, Loader2, Brain, Zap, Globe, MapPin, Sparkles } from 'lucide-react';
+import { Send, Loader2, Brain, Zap, Globe, MapPin, Sparkles, Menu, X } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { Message } from '../types';
 
@@ -8,7 +8,12 @@ const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
 type ChatMode = 'standard' | 'thinking' | 'fast' | 'search' | 'maps';
 
-const Chatbot: React.FC = () => {
+interface ChatbotProps {
+  isSidebarVisible: boolean;
+  toggleSidebar: () => void;
+}
+
+const Chatbot: React.FC<ChatbotProps> = ({ isSidebarVisible, toggleSidebar }) => {
   const [messages, setMessages] = useState<Message[]>([
     { role: 'assistant', text: 'Hello! I am Gemini. Choose a mode below and ask me anything.' }
   ]);
@@ -93,9 +98,17 @@ const Chatbot: React.FC = () => {
   ];
 
   return (
-    <div className="flex flex-col h-full bg-zinc-950">
+    <div className="flex flex-col h-full bg-zinc-950 relative">
+      <button
+        onClick={toggleSidebar}
+        className="absolute top-4 left-4 p-2 rounded-lg bg-zinc-800/50 text-zinc-400 hover:text-zinc-100 transition-colors z-50"
+        title="Toggle Sidebar"
+      >
+        {isSidebarVisible ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
+      </button>
+
       {/* Header / Mode Selector */}
-      <div className="p-4 border-b border-zinc-800 bg-zinc-900/50 flex flex-wrap gap-2 items-center justify-center">
+      <div className="p-4 border-b border-zinc-800 bg-zinc-900/50 flex flex-wrap gap-2 items-center justify-center pl-16">
         {modes.map(m => {
           const Icon = m.icon;
           const isActive = mode === m.id;

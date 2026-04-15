@@ -1,10 +1,15 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { GoogleGenAI, Modality, LiveServerMessage } from '@google/genai';
-import { Mic, MicOff, Loader2, Volume2, Waveform } from 'lucide-react';
+import { Mic, MicOff, Loader2, Volume2, Waveform, Menu, X } from 'lucide-react';
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
-const LiveAudio: React.FC = () => {
+interface LiveAudioProps {
+  isSidebarVisible: boolean;
+  toggleSidebar: () => void;
+}
+
+const LiveAudio: React.FC<LiveAudioProps> = ({ isSidebarVisible, toggleSidebar }) => {
   const [isConnected, setIsConnected] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -203,7 +208,15 @@ const LiveAudio: React.FC = () => {
   };
 
   return (
-    <div className="h-full flex flex-col items-center justify-center p-8">
+    <div className="h-full flex flex-col items-center justify-center p-8 relative">
+      <button
+        onClick={toggleSidebar}
+        className="absolute top-4 left-4 p-2 rounded-lg bg-zinc-800/50 text-zinc-400 hover:text-zinc-100 transition-colors z-50"
+        title="Toggle Sidebar"
+      >
+        {isSidebarVisible ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
+      </button>
+
       <div className="max-w-md w-full bg-zinc-900 border border-zinc-800 rounded-3xl p-8 flex flex-col items-center text-center shadow-2xl relative overflow-hidden">
         
         {/* Animated background waves when connected */}

@@ -21,10 +21,10 @@ const App: React.FC = () => {
       {isSidebarVisible && <Sidebar currentMode={mode} setMode={setMode} />}
       <main className="flex-1 h-full relative overflow-hidden bg-zinc-900/50">
         {mode === 'screen' && <ScreenAssistant isSidebarVisible={isSidebarVisible} toggleSidebar={() => setIsSidebarVisible(!isSidebarVisible)} />}
-        {mode === 'live-audio' && <LiveAudio />}
-        {mode === 'chatbot' && <Chatbot />}
-        {mode === 'media' && <MediaAnalysis />}
-        {mode === 'index' && <DataIndex />}
+        {mode === 'live-audio' && <LiveAudio isSidebarVisible={isSidebarVisible} toggleSidebar={() => setIsSidebarVisible(!isSidebarVisible)} />}
+        {mode === 'chatbot' && <Chatbot isSidebarVisible={isSidebarVisible} toggleSidebar={() => setIsSidebarVisible(!isSidebarVisible)} />}
+        {mode === 'media' && <MediaAnalysis isSidebarVisible={isSidebarVisible} toggleSidebar={() => setIsSidebarVisible(!isSidebarVisible)} />}
+        {mode === 'index' && <DataIndex isSidebarVisible={isSidebarVisible} toggleSidebar={() => setIsSidebarVisible(!isSidebarVisible)} />}
       </main>
     </div>
   );

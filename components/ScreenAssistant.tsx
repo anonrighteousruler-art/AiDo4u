@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { GoogleGenAI } from '@google/genai';
-import { MonitorUp, MonitorOff, Send, Loader2, Image as ImageIcon, MousePointer2, Keyboard, Info, Save, MessageSquare } from 'lucide-react';
+import { MonitorUp, MonitorOff, Send, Loader2, Image as ImageIcon, MousePointer2, Keyboard, Info, Save, MessageSquare, Menu, X, PanelRightClose, PanelRightOpen, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 
 interface Message {
@@ -275,14 +275,14 @@ Then provide a helpful explanation. Do not use markdown for the BBOX or TYPE lin
               className="p-2 rounded-lg bg-zinc-800 text-zinc-400 hover:text-zinc-100 transition-colors"
               title="Toggle Sidebar"
             >
-              {isSidebarVisible ? <MonitorOff className="w-4 h-4" /> : <MonitorUp className="w-4 h-4" />}
+              {isSidebarVisible ? <PanelLeftClose className="w-4 h-4" /> : <PanelLeftOpen className="w-4 h-4" />}
             </button>
             <button
               onClick={() => setIsChatVisible(!isChatVisible)}
               className="p-2 rounded-lg bg-zinc-800 text-zinc-400 hover:text-zinc-100 transition-colors"
               title="Toggle Chat Panel"
             >
-              {isChatVisible ? <MessageSquare className="w-4 h-4" /> : <MonitorUp className="w-4 h-4" />}
+              {isChatVisible ? <PanelRightClose className="w-4 h-4" /> : <PanelRightOpen className="w-4 h-4" />}
             </button>
             <button
               onClick={isSharing ? stopSharing : startSharing}
