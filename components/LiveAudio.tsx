@@ -1,8 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { GoogleGenAI, Modality, LiveServerMessage } from '@google/genai';
-import { Mic, MicOff, Loader2, Volume2, Waveform, Menu, X } from 'lucide-react';
-
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+import { Mic, MicOff, Loader2, Volume2, Activity, Menu, X, Settings as SettingsIcon, UserCircle } from 'lucide-react';
+import { useSettings } from '../SettingsContext';
+import { getBehaviorPrompt } from '../utils/behavior';
 
 interface LiveAudioProps {
   isSidebarVisible: boolean;
@@ -10,216 +9,164 @@ interface LiveAudioProps {
 }
 
 const LiveAudio: React.FC<LiveAudioProps> = ({ isSidebarVisible, toggleSidebar }) => {
+  const { settings, updateSettings } = useSettings();
+  const audioSettings = settings['live-audio'];
+
   const [isConnected, setIsConnected] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [transcript, setTranscript] = useState<{ role: string; text: string }[]>([]);
+  const [showSettings, setShowSettings] = useState(false);
 
-  const sessionRef = useRef<any>(null);
+  const wsRef = useRef<WebSocket | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
-  const workletNodeRef = useRef<AudioWorkletNode | null>(null);
-  const playbackQueueRef = useRef<Float32Array[]>([]);
-  const isPlayingRef = useRef(false);
   const nextPlayTimeRef = useRef(0);
 
-  // Clean up on unmount
   useEffect(() => {
     return () => {
       stopSession();
     };
   }, []);
 
-  const initAudioContext = async () => {
-    if (!audioContextRef.current) {
-      audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({
-        sampleRate: 24000, // Gemini Live expects 16kHz or 24kHz, output is 24kHz
-      });
-    }
-    if (audioContextRef.current.state === 'suspended') {
-      await audioContextRef.current.resume();
-    }
-  };
-
   const startSession = async () => {
     try {
       setIsConnecting(true);
       setError(null);
-      await initAudioContext();
 
-      // Request microphone access
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          channelCount: 1,
-          sampleRate: 16000,
-        },
-      });
-      mediaStreamRef.current = stream;
+      if (!audioContextRef.current) {
+        audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
+      }
+      if (audioContextRef.current.state === 'suspended') {
+        await audioContextRef.current.resume();
+      }
 
-      // Connect to Gemini Live API
-      const sessionPromise = ai.live.connect({
-        model: 'gemini-2.5-flash-native-audio-preview-12-2025',
-        config: {
-          responseModalities: [Modality.AUDIO],
-          speechConfig: {
-            voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Zephyr' } },
-          },
-          systemInstruction: 'You are a helpful, conversational AI assistant. Keep your responses concise and natural for a spoken conversation.',
-        },
-        callbacks: {
-          onopen: () => {
-            setIsConnected(true);
-            setIsConnecting(false);
-            startAudioCapture(sessionPromise);
-          },
-          onmessage: async (message: LiveServerMessage) => {
-            // Handle audio output
-            const base64Audio = message.serverContent?.modelTurn?.parts[0]?.inlineData?.data;
-            if (base64Audio) {
-              playAudioChunk(base64Audio);
-            }
-            
-            // Handle interruption
-            if (message.serverContent?.interrupted) {
-              playbackQueueRef.current = [];
-              isPlayingRef.current = false;
-              nextPlayTimeRef.current = audioContextRef.current?.currentTime || 0;
-            }
-          },
-          onclose: () => {
-            stopSession();
-          },
-          onerror: (err) => {
-            console.error('Live API Error:', err);
-            setError('Connection error occurred.');
-            stopSession();
-          },
-        },
-      });
+      const micStream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, sampleRate: 16000 } });
+      mediaStreamRef.current = micStream;
 
-      sessionRef.current = sessionPromise;
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const ws = new WebSocket(`${protocol}//${window.location.host}/live`);
+      wsRef.current = ws;
+
+      ws.onopen = () => {
+        const behaviorPrompt = getBehaviorPrompt(audioSettings.behaviorProfile, audioSettings.customBehaviorInstructions);
+        ws.send(JSON.stringify({
+          type: 'setup',
+          voice: audioSettings.voiceName,
+          systemInstruction: `You are a helpful, conversational AI assistant. Keep your responses concise and natural for a spoken conversation. ${behaviorPrompt}`
+        }));
+      };
+
+      ws.onmessage = async (event) => {
+        const msg = JSON.parse(event.data);
+        if (msg.type === 'connected') {
+          setIsConnected(true);
+          setIsConnecting(false);
+          startMicCapture();
+        } else if (msg.type === 'audio') {
+          playAudioChunk(msg.data);
+        } else if (msg.type === 'interrupted') {
+          nextPlayTimeRef.current = audioContextRef.current?.currentTime || 0;
+        } else if (msg.type === 'error') {
+          setError(msg.message);
+          stopSession();
+        }
+      };
+
+      ws.onclose = () => stopSession();
+      ws.onerror = (err) => {
+        console.error("WS error:", err);
+        setError("WebSocket connection failed.");
+        stopSession();
+      };
 
     } catch (err: any) {
       console.error('Failed to start session:', err);
-      setError(err.message || 'Failed to access microphone or connect to API.');
+      setError(err.message || 'Failed to access microphone.');
       setIsConnecting(false);
       stopSession();
     }
   };
 
-  const startAudioCapture = async (sessionPromise: Promise<any>) => {
-    if (!audioContextRef.current || !mediaStreamRef.current) return;
-
-    const source = audioContextRef.current.createMediaStreamSource(mediaStreamRef.current);
-    
-    // Create a ScriptProcessorNode for capturing audio (deprecated but widely supported without serving a separate worklet file)
-    // In a production app, use AudioWorkletNode with a separate JS file.
-    const processor = audioContextRef.current.createScriptProcessor(4096, 1, 1);
+  const startMicCapture = () => {
+    if (!audioContextRef.current || !mediaStreamRef.current || !wsRef.current) return;
+    const ctx = new AudioContext({ sampleRate: 16000 });
+    const source = ctx.createMediaStreamSource(mediaStreamRef.current);
+    const processor = ctx.createScriptProcessor(4096, 1, 1);
     
     processor.onaudioprocess = (e) => {
+      if (wsRef.current?.readyState !== WebSocket.OPEN) return;
       const inputData = e.inputBuffer.getChannelData(0);
-      // Convert Float32Array to Int16Array (PCM 16-bit)
       const pcm16 = new Int16Array(inputData.length);
       for (let i = 0; i < inputData.length; i++) {
         const s = Math.max(-1, Math.min(1, inputData[i]));
         pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
       }
-      
-      // Convert to base64
-      const buffer = new ArrayBuffer(pcm16.length * 2);
-      const view = new DataView(buffer);
-      for (let i = 0; i < pcm16.length; i++) {
-        view.setInt16(i * 2, pcm16[i], true); // true for little-endian
-      }
-      
-      let binary = '';
-      const bytes = new Uint8Array(buffer);
-      for (let i = 0; i < bytes.byteLength; i++) {
-        binary += String.fromCharCode(bytes[i]);
-      }
-      const base64Data = btoa(binary);
-
-      // Send to Gemini
-      sessionPromise.then((session) => {
-        session.sendRealtimeInput({
-          audio: { data: base64Data, mimeType: 'audio/pcm;rate=16000' }
-        });
-      }).catch(console.error);
+      const base64 = btoa(String.fromCharCode(...new Uint8Array(pcm16.buffer)));
+      wsRef.current.send(JSON.stringify({ type: 'audio', data: base64 }));
     };
 
     source.connect(processor);
-    processor.connect(audioContextRef.current.destination);
-    
-    // Store reference to disconnect later
+    processor.connect(ctx.destination);
     (source as any).processor = processor;
   };
 
   const playAudioChunk = async (base64Audio: string) => {
     if (!audioContextRef.current) return;
-    
-    // Decode base64 to ArrayBuffer
     const binaryString = atob(base64Audio);
-    const len = binaryString.length;
-    const bytes = new Uint8Array(len);
-    for (let i = 0; i < len; i++) {
-      bytes[i] = binaryString.charCodeAt(i);
-    }
-    
-    // The data is raw PCM 16-bit, 24kHz. We need to convert it to Float32 for Web Audio API.
-    const int16Array = new Int16Array(bytes.buffer);
+    const int16Array = new Int16Array(new Uint8Array([...binaryString].map(c => c.charCodeAt(0))).buffer);
     const float32Array = new Float32Array(int16Array.length);
-    for (let i = 0; i < int16Array.length; i++) {
-      float32Array[i] = int16Array[i] / 32768.0;
-    }
+    for (let i = 0; i < int16Array.length; i++) float32Array[i] = int16Array[i] / 32768.0;
 
     const audioBuffer = audioContextRef.current.createBuffer(1, float32Array.length, 24000);
     audioBuffer.getChannelData(0).set(float32Array);
-
     const source = audioContextRef.current.createBufferSource();
     source.buffer = audioBuffer;
     source.connect(audioContextRef.current.destination);
 
     const currentTime = audioContextRef.current.currentTime;
-    if (nextPlayTimeRef.current < currentTime) {
-      nextPlayTimeRef.current = currentTime;
-    }
-
+    if (nextPlayTimeRef.current < currentTime) nextPlayTimeRef.current = currentTime;
     source.start(nextPlayTimeRef.current);
     nextPlayTimeRef.current += audioBuffer.duration;
   };
 
   const stopSession = () => {
-    if (sessionRef.current) {
-      sessionRef.current.then((session: any) => session.close()).catch(console.error);
-      sessionRef.current = null;
+    if (wsRef.current) {
+      wsRef.current.close();
+      wsRef.current = null;
     }
     if (mediaStreamRef.current) {
       mediaStreamRef.current.getTracks().forEach(track => track.stop());
       mediaStreamRef.current = null;
     }
-    if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
+    if (audioContextRef.current) {
       audioContextRef.current.close();
       audioContextRef.current = null;
     }
-    playbackQueueRef.current = [];
-    isPlayingRef.current = false;
     setIsConnected(false);
     setIsConnecting(false);
   };
 
   return (
-    <div className="h-full flex flex-col items-center justify-center p-8 relative">
+    <div className="h-full flex flex-col items-center justify-center p-8 relative bg-zinc-950">
+      <div className="absolute top-4 left-4 flex gap-2">
+        <button
+          onClick={toggleSidebar}
+          className="p-2 rounded-lg bg-zinc-800/50 text-zinc-400 hover:text-zinc-100 transition-colors z-50"
+          title="Toggle Sidebar"
+        >
+          {isSidebarVisible ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
+        </button>
+      </div>
+
       <button
-        onClick={toggleSidebar}
-        className="absolute top-4 left-4 p-2 rounded-lg bg-zinc-800/50 text-zinc-400 hover:text-zinc-100 transition-colors z-50"
-        title="Toggle Sidebar"
+        onClick={() => setShowSettings(!showSettings)}
+        className="absolute top-4 right-4 p-2 rounded-lg bg-zinc-800/50 text-zinc-400 hover:text-zinc-100 transition-colors z-50"
+        title="Settings"
       >
-        {isSidebarVisible ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
+        <SettingsIcon className="w-5 h-5" />
       </button>
 
       <div className="max-w-md w-full bg-zinc-900 border border-zinc-800 rounded-3xl p-8 flex flex-col items-center text-center shadow-2xl relative overflow-hidden">
-        
-        {/* Animated background waves when connected */}
         {isConnected && (
           <div className="absolute inset-0 opacity-10 pointer-events-none flex items-center justify-center">
             <div className="w-64 h-64 bg-indigo-500 rounded-full blur-3xl animate-pulse" />
@@ -248,7 +195,7 @@ const LiveAudio: React.FC<LiveAudioProps> = ({ isSidebarVisible, toggleSidebar }
         <p className="text-zinc-400 text-sm mb-10 max-w-xs relative z-10">
           {isConnected 
             ? 'Speak naturally. Gemini is listening and will respond with voice.' 
-            : 'Start a real-time voice conversation with Gemini using the Native Audio API.'}
+            : 'Start a real-time voice conversation with Gemini. Now powered by full-stack WebSocket bridge.'}
         </p>
 
         {error && (
@@ -266,19 +213,65 @@ const LiveAudio: React.FC<LiveAudioProps> = ({ isSidebarVisible, toggleSidebar }
               : 'bg-indigo-500 text-white hover:bg-indigo-600 shadow-lg shadow-indigo-500/20'
           } disabled:opacity-50`}
         >
-          {isConnected ? (
-            <>
-              <MicOff className="w-5 h-5" />
-              End Conversation
-            </>
-          ) : (
-            <>
-              <Mic className="w-5 h-5" />
-              Start Conversation
-            </>
-          )}
+          {isConnected ? <><MicOff className="w-5 h-5" /> End</> : <><Mic className="w-5 h-5" /> Start</>}
         </button>
       </div>
+
+      {showSettings && (
+        <div className="absolute inset-x-8 top-20 bottom-8 bg-zinc-950 border border-zinc-800 rounded-3xl z-40 p-8 flex flex-col gap-6 shadow-2xl">
+          <div className="flex justify-between items-center">
+            <h2 className="text-xl font-semibold text-zinc-100">Live Audio Settings</h2>
+            <button onClick={() => setShowSettings(false)} className="p-2 hover:bg-zinc-800 rounded-lg"><X className="w-6 h-6" /></button>
+          </div>
+          <div className="space-y-6">
+            <div className="flex flex-col gap-2">
+              <label className="text-sm font-medium text-zinc-400">Voice Persona</label>
+              <select 
+                value={audioSettings.voiceName}
+                onChange={(e) => updateSettings('live-audio', { voiceName: e.target.value })}
+                className="bg-zinc-900 border border-zinc-800 rounded-xl p-3 text-zinc-200"
+              >
+                <option value="Zephyr">Zephyr (Neutral/Helpful)</option>
+                <option value="Puck">Puck (Cheerful/Quick)</option>
+                <option value="Kore">Kore (Professional/Clear)</option>
+                <option value="Charon">Charon (Deep/Serious)</option>
+              </select>
+            </div>
+
+            <div className="flex flex-col gap-2">
+              <label className="text-sm font-medium text-zinc-400 flex items-center gap-2">
+                <UserCircle className="w-4 h-4" /> Behavior Profile
+              </label>
+              <select 
+                value={audioSettings.behaviorProfile}
+                onChange={(e) => updateSettings('live-audio', { behaviorProfile: e.target.value as any })}
+                className="bg-zinc-900 border border-zinc-800 rounded-xl p-3 text-zinc-200"
+              >
+                <option value="professional">Professional</option>
+                <option value="friendly">Friendly</option>
+                <option value="direct">Direct</option>
+                <option value="encouraging">Encouraging</option>
+                <option value="teacher">Teacher</option>
+                <option value="accessibility">Accessibility (Plain Language)</option>
+                <option value="custom">Custom Instructions</option>
+              </select>
+            </div>
+
+            {audioSettings.behaviorProfile === 'custom' && (
+              <div className="flex flex-col gap-2">
+                <label className="text-sm font-medium text-zinc-400">Custom Behavior Instructions</label>
+                <textarea 
+                  value={audioSettings.customBehaviorInstructions}
+                  onChange={(e) => updateSettings('live-audio', { customBehaviorInstructions: e.target.value })}
+                  placeholder="e.g. Speak like a pirate, be very sarcastic, etc."
+                  className="bg-zinc-900 border border-zinc-800 rounded-xl p-3 text-zinc-200 h-24 resize-none"
+                />
+              </div>
+            )}
+          </div>
+          <button onClick={() => setShowSettings(false)} className="mt-auto py-3 bg-indigo-500 text-white rounded-xl font-medium hover:bg-indigo-600">Save</button>
+        </div>
+      )}
     </div>
   );
 };
